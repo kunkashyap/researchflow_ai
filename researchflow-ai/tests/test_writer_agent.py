@@ -272,7 +272,7 @@ class TestWordCountAndCitations:
     def test_word_count_calculation(self):
         from agents.writer_agent import _count_words
         text = "This is a test sentence with seven words."
-        assert _count_words(text) == 9  # all words including "with"
+        assert _count_words(text) == 8
 
     def test_citation_extraction(self):
         from agents.writer_agent import _extract_cited_sources
