@@ -12,6 +12,8 @@ Run with:
 from __future__ import annotations
 
 import html
+import importlib
+import os
 import re
 import threading
 import time
@@ -37,6 +39,11 @@ st.set_page_config(
 from memory.database import delete_session, get_all_sessions, get_session_by_id
 from models.schemas import ResearchConfiguration
 from orchestrator.research_orchestrator import ResearchOrchestrator
+import utils.config as config_module
+try:
+    importlib.reload(config_module)
+except Exception:
+    pass
 from utils.config import config
 
 # ---------------------------------------------------------------------------
@@ -642,6 +649,7 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] {
 def init_session_state() -> None:
     """Initialize Streamlit session state on first run."""
     defaults = {
+        "current_run_id": None,
         "research_result": None,
         "is_running": False,
         "agent_statuses": {
@@ -698,14 +706,23 @@ AGENT_META = {
 }
 
 
+# Thread-safe global registry tracking active background research runs
+ACTIVE_RUNS: dict[str, dict] = {}
+
+
 # ---------------------------------------------------------------------------
-# Background Research Runner
+# Background Research Runner (Decoupled from Streamlit Context)
 # ---------------------------------------------------------------------------
-def run_research_in_thread(research_config: ResearchConfiguration) -> None:
-    """Execute the multi-agent pipeline in a daemon thread."""
+def run_research_in_thread(run_id: str, research_config: ResearchConfiguration) -> None:
+    """
+    Execute the multi-agent pipeline in an isolated daemon thread.
+    Does NOT touch Streamlit session state directly, preventing StopException
+    when the UI reruns.
+    """
     def progress_callback(agent_name: str, status: str, message: str):
-        st.session_state.agent_statuses[agent_name] = status
-        st.session_state.agent_messages[agent_name] = message
+        if run_id in ACTIVE_RUNS:
+            ACTIVE_RUNS[run_id]["agent_statuses"][agent_name] = status
+            ACTIVE_RUNS[run_id]["agent_messages"][agent_name] = message
 
     orchestrator = ResearchOrchestrator()
     try:
@@ -713,15 +730,19 @@ def run_research_in_thread(research_config: ResearchConfiguration) -> None:
             research_config=research_config,
             progress_callback=progress_callback,
         )
-        st.session_state.research_result = result
-        if result.execution_logs:
-            st.session_state.execution_logs = result.execution_logs
+        if run_id in ACTIVE_RUNS:
+            ACTIVE_RUNS[run_id]["research_result"] = result
+            if result.execution_logs:
+                ACTIVE_RUNS[run_id]["execution_logs"] = result.execution_logs
     except Exception as exc:
-        st.session_state.research_result = None
-        st.session_state.agent_statuses = {k: "failed" for k in AGENT_META}
-        st.session_state.agent_messages["search_agent"] = str(exc)
+        if run_id in ACTIVE_RUNS:
+            ACTIVE_RUNS[run_id]["research_result"] = None
+            ACTIVE_RUNS[run_id]["agent_statuses"] = {k: "failed" for k in AGENT_META}
+            ACTIVE_RUNS[run_id]["agent_messages"]["search_agent"] = str(exc)
+            ACTIVE_RUNS[run_id]["error"] = str(exc)
     finally:
-        st.session_state.is_running = False
+        if run_id in ACTIVE_RUNS:
+            ACTIVE_RUNS[run_id]["is_running"] = False
 
 
 # ---------------------------------------------------------------------------
@@ -870,10 +891,15 @@ def render_sidebar() -> None:
                 unsafe_allow_html=True,
             )
 
+        gemini_key = getattr(config, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
+        openai_key = getattr(config, "OPENAI_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
+        gemini_model = getattr(config, "GEMINI_MODEL", "gemini-flash-latest")
+        openai_model = getattr(config, "OPENAI_MODEL", "gpt-4o-mini")
+        active_engine = f"Google Gemini ({gemini_model})" if (gemini_key and not openai_key) else f"OpenAI ({openai_model})"
         st.markdown(
             f"""
             <div style="font-size: 0.75rem; color: var(--text-muted); line-height: 1.5; margin-top: 8px;">
-                LLM Engine: <code style="color:var(--accent-cyan);">{config.OPENAI_MODEL}</code><br>
+                LLM Engine: <code style="color:var(--accent-cyan);">{active_engine}</code><br>
                 Search Engine: <code style="color:var(--accent-cyan);">Tavily Python SDK</code>
             </div>
             """,
@@ -904,8 +930,20 @@ def render_research_panel() -> None:
     # API Warning banner if keys missing
     api_errors = config.validate_api_keys()
     if api_errors:
-        st.error("⚠️ **API Keys Required**: Please configure `OPENAI_API_KEY` and `TAVILY_API_KEY` in `researchflow-ai/.env` to start live runs.")
+        st.error(f"⚠️ **API Key Configuration Needed**: {' • '.join(api_errors)}")
         return
+
+    # Synchronize background thread state to Streamlit session state
+    run_id = st.session_state.get("current_run_id")
+    if run_id and run_id in ACTIVE_RUNS:
+        run_data = ACTIVE_RUNS[run_id]
+        st.session_state.agent_statuses = dict(run_data["agent_statuses"])
+        st.session_state.agent_messages = dict(run_data["agent_messages"])
+        st.session_state.is_running = run_data["is_running"]
+        if run_data.get("research_result") is not None:
+            st.session_state.research_result = run_data["research_result"]
+        if run_data.get("execution_logs"):
+            st.session_state.execution_logs = list(run_data["execution_logs"])
 
     # Configuration Container
     with st.container():
@@ -963,13 +1001,24 @@ def render_research_panel() -> None:
             if not research_topic.strip():
                 st.warning("Please provide a research topic or question before starting.")
             else:
-                # Reset run state
+                import uuid
+                run_id = f"run_{uuid.uuid4().hex[:8]}"
+                st.session_state.current_run_id = run_id
                 st.session_state.research_result = None
                 st.session_state.execution_logs = []
                 st.session_state.agent_statuses = {k: "pending" for k in AGENT_META}
                 st.session_state.agent_messages = {k: "" for k in AGENT_META}
                 st.session_state.is_running = True
                 st.session_state.run_start_time = time.time()
+
+                ACTIVE_RUNS[run_id] = {
+                    "is_running": True,
+                    "research_result": None,
+                    "agent_statuses": {k: "pending" for k in AGENT_META},
+                    "agent_messages": {k: "" for k in AGENT_META},
+                    "execution_logs": [],
+                    "error": None,
+                }
 
                 config_obj = ResearchConfiguration(
                     research_topic=research_topic.strip(),
@@ -981,7 +1030,7 @@ def render_research_panel() -> None:
 
                 thread = threading.Thread(
                     target=run_research_in_thread,
-                    args=(config_obj,),
+                    args=(run_id, config_obj),
                     daemon=True,
                 )
                 thread.start()

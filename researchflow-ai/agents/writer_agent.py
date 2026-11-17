@@ -35,6 +35,7 @@ from models.schemas import (
 )
 from prompts.writer_prompts import writer_initial_prompt, writer_revision_prompt
 from utils.config import config
+from utils.llm_factory import create_llm
 from utils.logging_config import setup_logging
 
 logger = setup_logging("researchflow.writer_agent")
@@ -106,12 +107,7 @@ class WriterAgent:
 
     def __init__(self, model_name: Optional[str] = None):
         # Writers benefit from a slightly higher temperature for natural prose
-        self.llm = ChatOpenAI(
-            model=model_name or config.OPENAI_MODEL,
-            temperature=0.4,
-            openai_api_key=config.OPENAI_API_KEY,
-            max_tokens=4096,
-        )
+        self.llm = create_llm(temperature=0.4, max_tokens=4096, model_name=model_name)
         self._initial_chain = writer_initial_prompt | self.llm | StrOutputParser()
         self._revision_chain = writer_revision_prompt | self.llm | StrOutputParser()
 

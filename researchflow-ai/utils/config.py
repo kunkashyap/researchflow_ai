@@ -25,9 +25,19 @@ class Config:
     are ever hardcoded in source files.
     """
 
-    # --- OpenAI ---
+    # --- OpenAI & Compatible Providers (Groq, OpenRouter, DeepSeek, Ollama, etc.) ---
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "")
+
+    # --- Google Gemini ---
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "auto")
+
+    def __getattr__(self, name: str) -> str:
+        """Safe fallback for any dynamically added env vars."""
+        return os.getenv(name, "")
 
     # --- Tavily ---
     TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
@@ -59,13 +69,16 @@ class Config:
     @classmethod
     def validate_api_keys(cls) -> list[str]:
         """
-        Check that all required API keys are present and non-empty.
+        Check that at least one valid LLM key (OpenAI or Gemini) and Tavily key are present.
         Returns a list of error messages (empty list means all OK).
         """
         errors: list[str] = []
-        if not cls.OPENAI_API_KEY or cls.OPENAI_API_KEY == "your_openai_api_key_here":
+        has_openai = bool(cls.OPENAI_API_KEY and cls.OPENAI_API_KEY != "your_openai_api_key_here")
+        has_gemini = bool(cls.GEMINI_API_KEY and cls.GEMINI_API_KEY != "your_gemini_api_key_here")
+
+        if not (has_openai or has_gemini):
             errors.append(
-                "OPENAI_API_KEY is missing. Please set it in your .env file."
+                "LLM API Key missing: Please configure either OPENAI_API_KEY or GEMINI_API_KEY in your .env file."
             )
         if not cls.TAVILY_API_KEY or cls.TAVILY_API_KEY == "your_tavily_api_key_here":
             errors.append(

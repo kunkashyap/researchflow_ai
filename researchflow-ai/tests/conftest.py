@@ -19,4 +19,5 @@ if project_root not in sys.path:
 # print warnings during test collection (tests mock the actual API calls).
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-dummy-key-for-testing-only")
 os.environ.setdefault("TAVILY_API_KEY", "tvly-test-dummy-key-for-testing-only")
+os.environ.setdefault("LLM_PROVIDER", "openai")
 os.environ.setdefault("LOG_LEVEL", "ERROR")  # Suppress log noise during tests

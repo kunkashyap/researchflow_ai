@@ -33,6 +33,7 @@ from models.schemas import (
 )
 from prompts.critic_prompts import critic_prompt
 from utils.config import config
+from utils.llm_factory import create_llm
 from utils.logging_config import setup_logging
 
 logger = setup_logging("researchflow.critic_agent")
@@ -134,12 +135,7 @@ class CriticAgent:
 
     def __init__(self, model_name: Optional[str] = None):
         # Critics should be strict and analytical — lower temperature
-        self.llm = ChatOpenAI(
-            model=model_name or config.OPENAI_MODEL,
-            temperature=0.1,
-            openai_api_key=config.OPENAI_API_KEY,
-            max_tokens=2048,
-        )
+        self.llm = create_llm(temperature=0.1, max_tokens=2048, model_name=model_name)
         self._chain = critic_prompt | self.llm | StrOutputParser()
 
     def evaluate(

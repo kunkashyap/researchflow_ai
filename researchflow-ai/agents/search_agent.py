@@ -26,6 +26,7 @@ from models.schemas import ResearchConfiguration, SearchAgentOutput
 from prompts.search_prompts import search_query_generation_prompt
 from tools.tavily_search import TavilySearchTool
 from utils.config import config
+from utils.llm_factory import create_llm
 from utils.logging_config import setup_logging
 
 logger = setup_logging("researchflow.search_agent")
@@ -69,11 +70,7 @@ class SearchAgent:
     """
 
     def __init__(self, model_name: Optional[str] = None):
-        self.llm = ChatOpenAI(
-            model=model_name or config.OPENAI_MODEL,
-            temperature=0.3,  # Low temperature for precise query generation
-            openai_api_key=config.OPENAI_API_KEY,
-        )
+        self.llm = create_llm(temperature=0.3, model_name=model_name)
         self.search_tool = TavilySearchTool()
         # LCEL chain for query generation
         self._query_chain = search_query_generation_prompt | self.llm | StrOutputParser()

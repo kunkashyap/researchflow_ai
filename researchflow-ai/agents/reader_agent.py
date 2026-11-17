@@ -31,6 +31,7 @@ from prompts.reader_prompts import reader_summarisation_prompt
 from tools.web_scraper import scrape_sources_concurrently
 from utils.config import config
 from utils.helpers import clean_text
+from utils.llm_factory import create_llm
 from utils.logging_config import setup_logging
 
 logger = setup_logging("researchflow.reader_agent")
@@ -49,11 +50,7 @@ class ReaderAgent:
     """
 
     def __init__(self, model_name: Optional[str] = None):
-        self.llm = ChatOpenAI(
-            model=model_name or config.OPENAI_MODEL,
-            temperature=0.0,  # Zero temperature for factual summarisation
-            openai_api_key=config.OPENAI_API_KEY,
-        )
+        self.llm = create_llm(temperature=0.0, model_name=model_name)
         # LCEL summarisation chain
         self._summarisation_chain = (
             reader_summarisation_prompt | self.llm | StrOutputParser()
